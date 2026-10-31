@@ -1,0 +1,35 @@
+name: bump-brave-origin
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bump if a newer version exists
+        run: |
+          set -euo pipefail
+          base=https://brave-browser-apt-release.s3.brave.com
+          curl -fsSL "$base/dists/stable/main/binary-amd64/Packages" -o /tmp/Packages
+          latest=$(awk '/^Package: brave-origin$/{f=1} f&&/^Version:/{print $2; f=0}' /tmp/Packages \
+            | sed -E 's/^[0-9]+://; s/-[0-9]+$//' | sort -V | tail -1)
+          [ -n "$latest" ] || { echo "could not find version"; exit 1; }
+          cd www-client/brave-origin-bin
+          cur=$(ls brave-origin-bin-*.ebuild | sed -E 's/^brave-origin-bin-(.*)\.ebuild$/\1/' | sort -V | tail -1)
+          echo "current=$cur latest=$latest"
+          [ "$cur" != "$latest" ] || exit 0
+          [ "$(printf '%s\n%s\n' "$cur" "$latest" | sort -V | tail -1)" = "$latest" ] || exit 0
+          f="brave-origin_${latest}_amd64.deb"
+          curl -fsSLo "/tmp/$f" "$base/pool/main/b/brave-origin/$f"
+          git mv "brave-origin-bin-$cur.ebuild" "brave-origin-bin-$latest.ebuild"
+          printf 'DIST %s %s BLAKE2B %s SHA512 %s\n' "$f" "$(stat -c%s "/tmp/$f")" \
+            "$(b2sum "/tmp/$f" | cut -d' ' -f1)" "$(sha512sum "/tmp/$f" | cut -d' ' -f1)" > Manifest
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -m "www-client/brave-origin-bin: bump to $latest"
+          git push
