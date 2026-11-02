@@ -1,0 +1,34 @@
+name: bump-floorp
+on:
+  schedule:
+    - cron: "37 6 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bump if a newer version exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest=$(gh api repos/Floorp-Projects/Floorp/releases/latest --jq .tag_name | sed 's/^v//')
+          [ -n "$latest" ] || { echo "could not find version"; exit 1; }
+          cd www-client/floorp-bin
+          cur=$(ls floorp-bin-*.ebuild | sed -E 's/^floorp-bin-(.*)\.ebuild$/\1/' | sort -V | tail -1)
+          echo "current=$cur latest=$latest"
+          [ "$cur" != "$latest" ] || exit 0
+          [ "$(printf '%s\n%s\n' "$cur" "$latest" | sort -V | tail -1)" = "$latest" ] || exit 0
+          f="floorp-${latest}-linux-x86_64.tar.xz"
+          curl -fsSLo "/tmp/$f" "https://github.com/Floorp-Projects/Floorp/releases/download/v${latest}/floorp-linux-x86_64.tar.xz"
+          git mv "floorp-bin-$cur.ebuild" "floorp-bin-$latest.ebuild"
+          printf 'DIST %s %s BLAKE2B %s SHA512 %s\n' "$f" "$(stat -c%s "/tmp/$f")" \
+            "$(b2sum "/tmp/$f" | cut -d' ' -f1)" "$(sha512sum "/tmp/$f" | cut -d' ' -f1)" > Manifest
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -m "www-client/floorp-bin: bump to $latest"
+          git push
